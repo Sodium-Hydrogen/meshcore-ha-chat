@@ -160,6 +160,42 @@ async def test_message_handler_persists_event(
     # Inbound messages get default delivery_status="sent".
     assert record["delivery_status"] == "sent"
 
+@pytest.mark.parametrize(
+    ("signature", "author"),
+    [
+        ("bbbbbbbb", "Client"),
+        ("deadbeef", None),
+    ],
+)
+async def test_message_handler_persists_room_server_author_and_signature(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_store: MagicMock,
+    signature: str,
+    author: str | None,
+) -> None:
+    """Room server events copy ``signature`` and ``author`` onto the stored record."""
+    handler = _make_message_handler(hass, config_entry.entry_id)
+    await handler(_make_event({
+        "id": "m1",
+        "entity_id": "binary_sensor.town_square",
+        "sender_name": "Town Square",
+        "pubkey_prefix": "c" * 12,
+        "signature": signature,
+        "author": author,
+        "message": "Hello room",
+        "timestamp": "2026-05-01T10:00:00",
+        "message_type": "direct",
+        "outgoing": False,
+    }))
+    mock_store.store_message.assert_awaited_once()
+    eid, record = mock_store.store_message.await_args.args
+    assert eid == "binary_sensor.town_square"
+    # Conversation peer stays the room server; post author metadata is preserved.
+    assert record["sender"] == "Town Square"
+    assert record["signature"] == signature
+    assert "author" in record
+    assert record["author"] == author
 
 async def test_message_handler_skips_when_no_entity_id(
     hass: HomeAssistant,

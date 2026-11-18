@@ -2,6 +2,7 @@
 
 import { describe, expect, it, afterEach } from 'vitest';
 import { MessageStore } from '../src/chat/message-store';
+import { groupMessages, resolveMessageAuthor } from '../src/chat/message-parser';
 import type {
   HomeAssistant,
   HassEvent,
@@ -584,5 +585,86 @@ describe('MessageStore Phase 3 — setUserAtBottom R5c reset', () => {
     store.setUserAtBottom(false);
     expect(store.newMessagesWhileAway).toBe(2);
     expect(notified).toBe(0);
+  });
+});
+
+describe('Room server author and signature handling', () => {
+  it('hydrates author and signature from stored messages and groups by post author', async () => {
+    const storedPosts: StoredMessage[] = [
+      {
+        ...makeStored('rs-1', '2026-05-04T12:00:00Z', 'Town Square', 'First post'),
+        message_type: 'direct',
+        pubkey_prefix: 'cccccccccccc',
+        signature: 'bbbbbbbb',
+        author: 'Client',
+      },
+      {
+        ...makeStored('rs-2', '2026-05-04T12:00:05Z', 'Town Square', 'Second post'),
+        message_type: 'direct',
+        pubkey_prefix: 'cccccccccccc',
+        signature: 'deadbeef',
+        author: null,
+      },
+    ];
+
+    const hass = makeMockHass({
+      callWS: async (msg) => {
+        if (msg.type === 'meshcore_chat/get_stored_messages') {
+          return { messages: storedPosts, has_more: false };
+        }
+        return { messages: [], has_more: false };
+      },
+    });
+    const store = track(new MessageStore(makeConfig()));
+    store.setHass(hass);
+
+    await store.switchEntity('binary_sensor.town_square');
+
+    expect(store.messages).toHaveLength(2);
+    expect(store.messages[0]).toMatchObject({
+      sender: 'Town Square',
+      author: 'Client',
+      signature: 'bbbbbbbb',
+    });
+    expect(store.messages[1]).toMatchObject({
+      sender: 'Town Square',
+      author: null,
+      signature: 'deadbeef',
+    });
+
+    // Consecutive posts from different authors in the same room server
+    // must split into separate groups with resolved author headers.
+    const groups = groupMessages(store.messages, 300);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].sender).toBe('Client');
+    expect(groups[1].sender).toBe('Unknown (deadbe)');
+  });
+
+  it('attaches author and signature on live realtime events without altering sender', () => {
+    const hass = makeMockHass({
+      callWS: async () => ({ messages: [], has_more: false }),
+    });
+    const store = track(new MessageStore(makeConfig()));
+    store.setHass(hass);
+    priv(store)._entityId = 'binary_sensor.town_square';
+
+    priv(store)._handleRealtimeMessage({
+      entity_id: 'binary_sensor.town_square',
+      sender_name: 'Town Square',
+      pubkey_prefix: 'cccccccccccc',
+      signature: 'bbbbbbbb',
+      author: 'Client',
+      message: 'Live room post',
+      timestamp: '2026-05-04T12:00:10.000Z',
+    });
+
+    expect(store.messages).toHaveLength(1);
+    expect(store.messages[0]).toMatchObject({
+      sender: 'Town Square',
+      author: 'Client',
+      signature: 'bbbbbbbb',
+      text: 'Live room post',
+    });
+    expect(resolveMessageAuthor(store.messages[0])).toBe('Client');
   });
 });

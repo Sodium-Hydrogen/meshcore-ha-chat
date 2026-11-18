@@ -708,6 +708,8 @@ export class MessageStore {
     if (eventData.entry_id && this._config.entry_id && eventData.entry_id !== this._config.entry_id) return;
     const sender = String(eventData.sender_name || eventData.sender || eventData.pubkey_prefix || eventData.contact_public_key || 'Unknown');
     const text = (eventData.message ?? eventData.text) as string;
+    const author = (eventData.author as string | null | undefined) ?? undefined;
+    const signature = (eventData.signature as string | undefined) || undefined;
     const isOutgoing = typeof eventData.outgoing === 'boolean' ? eventData.outgoing : sender === this._config.node_name;
 
     // Skip outgoing messages — they are already shown via the optimistic path.
@@ -813,6 +815,8 @@ export class MessageStore {
         const msg: ChatMessage = {
           id,
           sender,
+          author,
+          signature,
           text: displayText,
           timestamp,
           isOutgoing: false,

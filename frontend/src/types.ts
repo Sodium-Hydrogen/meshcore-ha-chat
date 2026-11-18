@@ -74,6 +74,8 @@ export interface StoredMessage {
   collecting?: boolean;
   id: string;
   sender: string;
+  author?: string | null;
+  signature?: string;
   text: string;
   timestamp: string;
   message_type: 'channel' | 'direct';
@@ -122,6 +124,10 @@ export interface ChatMessage {
   id: string;
   /** Parsed sender name */
   sender: string;
+  /** Resolved advertised name of the post author for room server messages (null if unknown) */
+  author?: string | null;
+  /** Public key prefix of the post author for room server messages */
+  signature?: string;
   /** Message content (prefix stripped) */
   text: string;
   /** Message timestamp */

@@ -399,6 +399,8 @@ def _make_message_handler(hass: HomeAssistant, entry_id: str):
             "entry_id",
             "repeats_observable",
             "collecting",
+            "author",
+            "signature",
         ):
             if k in data:
                 record[k] = data[k]

@@ -147,6 +147,8 @@ export function toClientMessage(stored: StoredMessage): ChatMessage {
     id: stored.id,
     sendId: stored.send_id,
     sender: stored.sender,
+    author: stored.author,
+    signature: stored.signature,
     text: stored.text,
     timestamp: new Date(stored.timestamp),
     isOutgoing: stored.outgoing,
@@ -171,6 +173,20 @@ export function toClientMessage(stored: StoredMessage): ChatMessage {
 }
 
 /**
+ * Return the display sender for a message. For room server posts (which carry
+ * a `signature` prefix), resolve to the post author or `Unknown (<prefix>)`.
+ */
+export function resolveMessageAuthor(
+  msg: Pick<ChatMessage, 'sender' | 'author' | 'signature'>,
+): string {
+  if (msg.signature) {
+    return msg.author || `Unknown (${msg.signature.slice(0, 6)})`;
+  }
+  return msg.sender;
+}
+
+
+/**
  * Group consecutive messages from the same sender within a time window.
  */
 export function groupMessages(messages: ChatMessage[], timeoutSeconds: number): MessageGroup[] {
@@ -180,16 +196,17 @@ export function groupMessages(messages: ChatMessage[], timeoutSeconds: number): 
   let currentGroup: MessageGroup | null = null;
 
   for (const msg of messages) {
+    const displaySender = resolveMessageAuthor(msg);
     const shouldStartNewGroup =
       !currentGroup ||
       msg.isSystem ||
       currentGroup.isSystem ||
-      msg.sender !== currentGroup.sender ||
+      displaySender !== currentGroup.sender ||
       (msg.timestamp.getTime() - currentGroup.endTime.getTime()) / 1000 > timeoutSeconds;
 
     if (shouldStartNewGroup) {
       currentGroup = {
-        sender: msg.sender,
+        sender: displaySender,
         isOutgoing: msg.isOutgoing,
         isSystem: msg.isSystem,
         messages: [msg],
