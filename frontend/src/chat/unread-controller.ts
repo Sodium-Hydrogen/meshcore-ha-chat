@@ -10,6 +10,7 @@ import { MARK_READ_GRACE_PERIOD_MS } from '../constants';
 export interface UnreadBackendData {
   unread: Record<string, number>;
   last_read: Record<string, string>;
+  last_message_at?: Record<string, string>;
 }
 
 /**
@@ -122,6 +123,10 @@ export class UnreadController {
 
   /** Authoritative per-entity last-read message-ID cursor map. */
   private _lastRead: Record<string, string> = {};
+
+  /** Per-entity newest message timestamp (epoch ms), keyed by entity_id. */
+  private _lastActivity: Record<string, number> = {};
+
 
   /**
    * Re-render subscribers. Multi-subscriber by design: the controller
@@ -240,6 +245,14 @@ export class UnreadController {
   ): void {
     this._counts = { ...(payload?.unread ?? {}) };
     this._lastRead = { ...(payload?.last_read ?? {}) };
+    const nextActivity: Record<string, number> = { ...this._lastActivity };
+    for (const [entityId, iso] of Object.entries(payload?.last_message_at ?? {})) {
+      const parsed = Date.parse(iso);
+      if (!Number.isNaN(parsed) && parsed > (nextActivity[entityId] ?? 0)) {
+        nextActivity[entityId] = parsed;
+      }
+    }
+    this._lastActivity = nextActivity;
     this._notify();
   }
 
@@ -511,6 +524,35 @@ export class UnreadController {
     }
     return 0;
   }
+
+  /**
+   * Return the newest message timestamp (epoch ms) for a conversation id
+   * (channel index string or contact pubkey prefix), or 0 if none.
+   */
+  lastActivity(id: string | null, nodePrefix: string | null): number {
+    if (!id) return 0;
+    const isChannel = /^\d+$/.test(id);
+    const channelNeedle = nodePrefix
+      ? `meshcore_${nodePrefix}_ch_${id}_messages`
+      : null;
+
+    let best = 0;
+    for (const [entityId, ts] of Object.entries(this._lastActivity)) {
+      if (ts <= best) continue;
+      if (isChannel) {
+        if (channelNeedle) {
+          if (entityId.endsWith(channelNeedle)) best = ts;
+        } else if (entityId.endsWith(`_ch_${id}_messages`)) {
+          best = ts;
+        }
+      } else {
+        const prefix6 = id.substring(0, 6);
+        if (entityId.endsWith(`_${prefix6}_messages`)) best = ts;
+      }
+    }
+    return best;
+  }
+
 
   /**
    * Divider placement projection — the group index the "New messages"

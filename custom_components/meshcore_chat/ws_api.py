@@ -2036,31 +2036,31 @@ async def ws_get_unread_counts(hass, connection, msg):
     """
     tracker = hass.data.get(DOMAIN, {}).get("unread_tracker")
     if not tracker:
-        # Empty maps for both fields keeps the wire shape stable for
-        # frontends written against the new schema, regardless of
-        # whether the tracker is initialised.
-        connection.send_result(msg["id"], {"unread": {}, "last_read": {}})
+        connection.send_result(
+            msg["id"], {"unread": {}, "last_read": {}, "last_message_at": {}}
+        )
         return
     last_read = tracker.get_all_last_read()
     store = _get_store(hass, None)
     unread: dict[str, int] = {}
+    last_message_at: dict[str, str] = {}
     if store is not None:
-        # Walk every conversation the store knows about — the index
-        # surfaces entity_ids without forcing a full conversation load.
-        # ``count_unread_after`` lazy-loads the per-conversation file on
-        # first count, but each conversation is loaded at most once per
-        # round and cached for subsequent calls within this handler.
-        for entity_id in list(store.get_message_index().keys()):
+        index = store.get_message_index()
+        for entity_id, meta in list(index.items()):
             cursor = last_read.get(entity_id)
             count = await store.count_unread_after(entity_id, cursor)
             if count > 0:
                 unread[entity_id] = count
+            last_ts = meta.get("last_message_ts") if isinstance(meta, dict) else None
+            if last_ts:
+                last_message_at[entity_id] = last_ts
     entry_id = msg.get("entry_id")
     if entry_id is not None:
         coord = _resolve_coordinator(hass, entry_id)
         if coord is None:
-            # The resolver already logged the warning; respond with empty.
-            connection.send_result(msg["id"], {"unread": {}, "last_read": {}})
+            connection.send_result(
+                msg["id"], {"unread": {}, "last_read": {}, "last_message_at": {}}
+            )
             return
         prefix = (getattr(coord, "pubkey", "") or "")[:6]
         if prefix:
@@ -2073,7 +2073,18 @@ async def ws_get_unread_counts(hass, connection, msg):
             needle = f".meshcore_{prefix}_"
             unread = {k: v for k, v in unread.items() if needle in k}
             last_read = {k: v for k, v in last_read.items() if needle in k}
-    connection.send_result(msg["id"], {"unread": unread, "last_read": last_read})
+            last_message_at = {
+                k: v for k, v in last_message_at.items() if needle in k
+            }
+    connection.send_result(
+        msg["id"],
+        {
+            "unread": unread,
+            "last_read": last_read,
+            "last_message_at": last_message_at,
+        },
+    )
+
 
 
 @websocket_api.websocket_command(

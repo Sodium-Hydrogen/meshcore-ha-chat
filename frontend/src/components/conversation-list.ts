@@ -234,10 +234,11 @@ export class ConversationList extends LitElement {
     }
   `;
 
-  updated(changedProperties: Map<string, unknown>) {
+  willUpdate(changedProperties: Map<string, unknown>) {
     if (
       changedProperties.has('conversations') ||
-      changedProperties.has('_activeFilter')
+      changedProperties.has('_activeFilter') ||
+      changedProperties.has('unreadCounts')
     ) {
       this._updateFiltered();
     }
@@ -413,7 +414,14 @@ export class ConversationList extends LitElement {
     return this.unread ? this.unread.badgeCount(id, this.nodePrefix) : 0;
   }
 
+  private _convId(conv: Contact | Channel): string {
+    return 'pubkey_prefix' in conv
+      ? (conv as Contact).pubkey_prefix
+      : String((conv as Channel).channel_idx);
+  }
+
   private _updateFiltered() {
+    let list: Array<Contact | Channel>;
     // Apply category filter
     switch (this._activeFilter) {
       case 'all':
@@ -437,6 +445,18 @@ export class ConversationList extends LitElement {
         );
         break;
     }
+
+    list = [...this._filteredConversations];
+
+    if (this.unread) {
+      list.sort((a, b) => {
+        const aTs = this.unread.lastActivity(this._convId(a), this.nodePrefix);
+        const bTs = this.unread.lastActivity(this._convId(b), this.nodePrefix);
+        return bTs - aTs;
+      });
+    }
+
+    this._filteredConversations = list;
   }
 }
 

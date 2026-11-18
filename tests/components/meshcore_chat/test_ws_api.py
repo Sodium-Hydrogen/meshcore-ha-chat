@@ -1933,7 +1933,7 @@ async def test_ws_get_unread_counts_returns_empty_when_no_tracker(
     """No tracker → payload still carries both keys (Phase 1: stable shape)."""
     conn = _Connection()
     await _call_ws(ws_api.ws_get_unread_counts, hass, conn, {"id": 1})
-    assert conn.results[0][1] == {"unread": {}, "last_read": {}}
+    assert conn.results[0][1] == {"unread": {}, "last_read": {}, "last_message_at": {}}
 
 
 async def test_ws_get_unread_counts_happy(
@@ -1954,7 +1954,11 @@ async def test_ws_get_unread_counts_happy(
     hass.data[DOMAIN] = {"unread_tracker": tracker}
 
     store = companion_entry.runtime_data.store
-    store.get_message_index = MagicMock(return_value={"binary_sensor.x": {}})
+    store.get_message_index = MagicMock(
+        return_value={
+            "binary_sensor.x": {"last_message_ts": "2026-01-01T12:00:00"}
+        }
+    )
     store.count_unread_after = AsyncMock(return_value=3)
 
     conn = _Connection()
@@ -1966,6 +1970,7 @@ async def test_ws_get_unread_counts_happy(
     assert conn.results[0][1] == {
         "unread": {"binary_sensor.x": 3},
         "last_read": {"binary_sensor.x": "msg_99"},
+        "last_message_at": {'binary_sensor.x': "2026-01-01T12:00:00"},
     }
 
 
@@ -2039,6 +2044,7 @@ async def test_ws_get_unread_counts_handles_never_read_conversations(
     assert conn.results[0][1] == {
         "unread": {"binary_sensor.fresh": 4},
         "last_read": {},
+        "last_message_at": {},
     }
 
 
