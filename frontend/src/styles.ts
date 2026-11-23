@@ -52,6 +52,12 @@ export const panelStyles = css`
     --warn-bg: var(--meshcore-warn-bg, rgba(255, 152, 0, 0.18));
     --bad-bg:  var(--meshcore-bad-bg,  rgba(244, 67, 54, 0.18));
     --info-bg: var(--meshcore-info-bg, rgba(33, 150, 243, 0.18));
+
+    --channels-color:     var(--meshcore-channels,     rgb(3, 169, 244));
+    --clients-color:      var(--meshcore-clients,      rgb(76, 175, 80));
+    --repeaters-color:    var(--meshcore-repeaters,    rgb(255, 152, 0));
+    --room-servers-color: var(--meshcore-room-servers, rgb(156, 39, 176));
+    --sensors-color:      var(--meshcore-sensors,      rgb(96, 125, 139));
   }
 
   /* === Panel Layout === */

@@ -120,6 +120,23 @@ export async function sendDirectMessage(
   }
 }
 
+export async function sendCommand(
+  hass: HomeAssistant,
+  pubkeyPrefix: string,
+  command: string,
+  entryId?: string,
+): Promise<void> {
+  try {
+    const data: Record<string, unknown> = {
+    command: `send_cmd ${pubkeyPrefix} ${JSON.stringify(command)}`,
+  };
+  if (entryId) data.entry_id = entryId;
+  await hass.callService('meshcore', 'execute_command', data);
+  } catch (error) {
+    throw new Error(`Failed to send message: ${String(error)}`);
+  }
+}
+
 /**
  * Get list of managed devices (repeaters and clients)
  */
@@ -581,6 +598,7 @@ export async function removeContact(
 export interface UnreadCountsResponse {
   unread: Record<string, number>;
   last_read: Record<string, string>;
+  last_message_at?: Record<string, string>;
 }
 
 /**
@@ -603,8 +621,9 @@ export async function getUnreadAndLastRead(
     return {
       unread: result.unread || {},
       last_read: result.last_read || {},
+      last_message_at: result.last_message_at || {},
     };
-  } catch { return { unread: {}, last_read: {} }; }
+  } catch { return { unread: {}, last_read: {}, last_message_at: {} }; }
 }
 
 export async function getUnreadCounts(

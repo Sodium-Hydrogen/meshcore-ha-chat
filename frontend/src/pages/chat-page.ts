@@ -1,11 +1,11 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import type { HomeAssistant, PanelConfig, Contact, Channel } from '../types';
+import type { HomeAssistant, PanelConfig, Contact, Channel, CommandDef } from '../types';
 import { MessageStore } from '../chat/message-store';
 import { UnreadController, markReadTailKey, pillLabel } from '../chat/unread-controller';
 import { buildRenderItems } from '../chat/message-parser';
 import { discoverChannelEntity, discoverContactEntity } from '../chat/entity-resolver';
-import { sendDirectMessage, sendChannelMessage } from '../api';
+import { sendDirectMessage, sendChannelMessage, sendCommand } from '../api';
 import {
   AT_BOTTOM_THRESHOLD_PX,
   LAZY_LOAD_TRIGGER_PX,
@@ -14,6 +14,15 @@ import '../components/conversation-list';
 import '../components/manage-dialog';
 import '../components/message-bubble';
 import '../components/message-search';
+import { REMOTE_COMMANDS } from '../commands/remote-commands';
+
+interface SuggestionItem {
+  insertText: string;
+  displayLabel: string;
+  description: string;
+  argHint: string;
+  dangerous?: boolean;
+}
 
 @customElement('meshcore-chat-page')
 export class ChatPage extends LitElement {
@@ -52,6 +61,12 @@ export class ChatPage extends LitElement {
   private _unsubUnread: (() => void) | null = null;
   @state() private _inputText = '';
   @state() private _sending = false;
+  @state() private _menuOpen = false;
+  @state() private _selectedIdx = 0;
+  @state() private _roomMode: 'chat' | 'command' = 'chat';
+
+  //@state() private _confirmingDanger = false;
+  private _lastTabInput: string | null = null;
   private _failedDrafts = new Map<string, string[]>();
 
   private _draftContext(): string {
@@ -121,6 +136,7 @@ export class ChatPage extends LitElement {
       flex-direction: column;
       overflow: hidden;
       background: var(--chat-bg);
+      container-type: inline-size;
     }
 
     .chat-container {
@@ -139,6 +155,10 @@ export class ChatPage extends LitElement {
        * at the new buffer tail. That misfires mark-read on channel
        * re-entry. See 2026-05-15 unread-clearing investigation. */
       overflow-anchor: none;
+    }
+
+    .chat-container.shell-mode {
+      background: var(--zsh-bg, #1a1b26);
     }
 
     .chat-container::-webkit-scrollbar {
@@ -163,6 +183,13 @@ export class ChatPage extends LitElement {
       background: var(--input-bg);
       flex-shrink: 0;
     }
+
+    .textarea-wrap {
+      position: relative;
+      flex: 1;
+      display: flex;
+      min-width: 0;
+    } 
 
     .input-area textarea {
       flex: 1;
@@ -193,6 +220,35 @@ export class ChatPage extends LitElement {
     .input-area textarea:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+ 
+    .char-counter {
+      position: absolute;
+      right: 8px;
+      bottom: 4px;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      opacity: 0.6;
+      pointer-events: none;
+    }
+
+    .input-area.input-warn textarea {
+      border-color: var(--warning-color, #ff9800);
+      background-color: rgb(from var(--warning-color, #ff9800) r g b / 0.1);
+    }
+    .input-warn .char-counter {
+      color: var(--warning-color, #ff9800);
+    }
+
+    .input-area.input-over textarea {
+      border-color: var(--error-color, #f44336);
+      background-color: rgb(from var(--error-color, #f44336) r g b / 0.1);
+    }
+    .input-over .char-counter {
+      color: var(--error-color, #f44336);
+    }
+    .input-area.input-over .send-button {
+      background-color: var(--error-color, #f44336);
     }
 
     .send-button {
@@ -231,6 +287,237 @@ export class ChatPage extends LitElement {
          geometrically centered glyph reads as shifted left. */
       transform: translateX(2px);
     }
+ 
+    .input-area.zsh-input-area {
+      background: #1a1b26;
+      border-top: 1px solid #292e42;
+      align-items: flex-start;
+      font-family: 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      position: relative;
+    }
+
+    .zsh-input-prompt {
+      color: #9ece6a;
+      font-weight: 700;
+      font-size: 14px;
+      line-height: 20px;
+      padding: 10px 0;
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    /* Keep textarea and ghost backdrop font metrics identical so characters line up */
+    .input-area.zsh-input-area textarea,
+    .zsh-ghost-backdrop {
+      width: 100%;
+      margin: 0;
+      padding: 10px 4px;
+      border: 0;
+      font-family: var(--code-font-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+      font-size: 14px;
+      line-height: 1.4;
+      letter-spacing: normal;
+      white-space: no-wrap;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+    .input-area.zsh-input-area textarea {
+      position: relative;
+      resize: none;
+      background: transparent;
+      z-index: 1;
+      /*border: none;*/
+      border-radius: 0;
+      min-height: 40px;
+      /*line-height: 20px;*/
+      color: #c0caf5;
+      caret-color: #9ece6a;
+      /*font-family: inherit;
+      font-size: 13.5px;*/
+    }
+
+    .input-area.zsh-input-area textarea::placeholder {
+      color: #565f89;
+    }
+
+    .input-area.zsh-input-area .send-button {
+      align-self: center;
+      width: auto;
+      min-width: 36px;
+      height: 32px;
+      padding: 0 10px;
+      border: 1px solid #3b4261;
+      border-radius: 6px;
+      background: #24283b;
+      color: #9ece6a;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      gap: 4px;
+      transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
+    }
+
+    .input-area.zsh-input-area .send-button:hover:not(:disabled) {
+      background: #292e42;
+      border-color: #9ece6a;
+      opacity: 1;
+    }
+
+    .input-area.zsh-input-area .send-button:disabled {
+      border-color: #292e42;
+      background: #16161e;
+      color: #565f89;
+      opacity: 0.7;
+    }
+
+
+    .zsh-ghost-backdrop {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+    }
+    
+    .zsh-ghost-typed {
+      color: transparent;
+    }
+    
+    .zsh-ghost-suffix {
+      color: var(--secondary-text-color, #888);
+      opacity: 0.65;
+    }
+    
+    .zsh-ghost-hint {
+      color: var(--secondary-text-color, #888);
+      opacity: 0.45;
+      font-style: italic;
+    }
+    
+    /* Compact Tokyo Night Zsh Tab-Completion Menu */
+    .zsh-completions-menu {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: calc(100% + 4px);
+      max-height: 148px;
+      overflow-y: auto;
+      z-index: 20;
+      background: #16161e;
+      border: 1px solid #292e42;
+      border-radius: 4px;
+      box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.5);
+      padding: 2px;
+      scrollbar-width: thin;
+      scrollbar-color: #3b4261 transparent;
+    }
+
+    .zsh-completions-menu::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .zsh-completions-menu::-webkit-scrollbar-thumb {
+      background: #3b4261;
+      border-radius: 2px;
+    }
+
+    .zsh-completion-item {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 3px 8px;
+      min-height: 22px;
+      border: none;
+      border-radius: 3px;
+      background: transparent;
+      color: #c0caf5;
+      font-family: 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.3;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .zsh-completion-item:hover,
+    .zsh-completion-item.selected {
+      background: #292e42;
+    }
+
+    .zsh-completion-left {
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .zsh-completion-cmd {
+      color: #7aa2f7;
+      font-weight: 600;
+    }
+
+    .zsh-completion-item.dangerous .zsh-completion-cmd {
+      color: #f7768e;
+    }
+
+    .zsh-completion-item.dangerous .zsh-completion-cmd::after {
+      content: ' ⚠';
+      color: #f7768e;
+    }
+
+    .zsh-completion-args {
+      color: #9ece6a;
+      font-size: 11px;
+    }
+
+    .zsh-completion-desc {
+      color: #565f89;
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .room-mode-tabs {
+      display: inline-flex;
+      align-items: center;
+      background: var(--secondary-background-color, rgba(127, 127, 127, 0.15));
+      border-radius: 14px;
+      padding: 2px;
+      margin-left: 10px;
+      gap: 2px;
+      vertical-align: middle;
+    }
+
+    .room-mode-tab {
+      border: none;
+      background: transparent;
+      color: var(--secondary-text-color, #727272);
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 12px;
+      cursor: pointer;
+      line-height: 16px;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .room-mode-tab:hover {
+      color: var(--primary-text-color);
+    }
+
+    .room-mode-tab.active {
+      background: var(--primary-color, #03a9f4);
+      color: #fff;
+    }
+
+    .room-mode-tab.active.command-tab {
+      background: #1a1b26;
+      color: #9ece6a;
+      font-family: 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
 
     .empty-state {
       display: flex;
@@ -704,7 +991,7 @@ export class ChatPage extends LitElement {
             <div class="chat-main narrow-full">
               <div class="narrow-header">
                 <button class="back-button" @click=${() => (this._narrowShowMessages = false)}>← Back</button>
-                <span class="narrow-conv-name">${this._getConversationName()}${this._renderScopeChip()}</span>
+                <span class="narrow-conv-name">${this._getConversationName()}${this._renderScopeChip()}${this._renderRoomModeTabs()}</span>
                 <div class="chat-header-actions">
                   <button class="header-action-btn" title="Search messages" aria-label="Search messages" @click=${() => { this._searchOpen = !this._searchOpen; }}><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg></button>
                 </div>
@@ -771,8 +1058,8 @@ export class ChatPage extends LitElement {
         <div class="chat-main">
           ${this.selectedId ? html`
             <div class="narrow-header" style="display: flex; align-items: center; padding: 8px 16px;">
-              <div style="flex: 1; font-size: 14px; font-weight: 500; color: var(--primary-text-color);">
-                ${this._getConversationName()}${this._renderScopeChip()}
+              <div style="flex: 1; font-size: 14px; font-weight: 500; color: var(--primary-text-color); display: flex; align-items: center;">
+                <span>${this._getConversationName()}</span>${this._renderScopeChip()}${this._renderRoomModeTabs()}
               </div>
               <div class="chat-header-actions">
                 <button class="header-action-btn" title="Search messages" aria-label="Search messages" @click=${() => { this._searchOpen = !this._searchOpen; }}><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg></button>
@@ -808,6 +1095,39 @@ export class ChatPage extends LitElement {
     `;
   }
 
+  private _renderRoomModeTabs() {
+    if (!this._isRoomServer) return '';
+    return html`
+      <div class="room-mode-tabs" role="tablist" aria-label="Room server interaction mode">
+        <button
+          type="button"
+          role="tab"
+          aria-selected=${this._roomMode === 'chat'}
+          class="room-mode-tab ${this._roomMode === 'chat' ? 'active' : ''}"
+          @click=${() => {
+            this._roomMode = 'chat';
+            this._menuOpen = false;
+	    this._pendingScroll = 'last-read'
+          }}>
+          Chat
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected=${this._roomMode === 'command'}
+          class="room-mode-tab command-tab ${this._roomMode === 'command' ? 'active' : ''}"
+          @click=${() => {
+            this._roomMode = 'command';
+            this._menuOpen = false;
+	    this._pendingScroll = 'bottom'
+          }}>
+          ❯_ Command
+        </button>
+      </div>
+    `;
+  }
+
+
   private _renderChatArea() {
     if (!this._messageStore || !this.selectedId) {
       return html`
@@ -829,15 +1149,55 @@ export class ChatPage extends LitElement {
       `;
     }
 
-    const messages = this._messageStore.messages;
+    const rawMessages = this._messageStore.messages;
+    console.log(rawMessages);
+    const messages = this._isRoomServer
+      ? rawMessages.filter((m) => {
+          const msgAny = m as unknown as Record<string, unknown>;
+          const isCmdTagged = Boolean(msgAny.isCommand || msgAny.is_command || msgAny.txt_type === 1);
+          const hasSignature = Boolean(msgAny.signature);
+
+          // Incoming message with no participant signature (or tagged as CLI) is directly from the room server
+          const isFromRoomNode = !m.isOutgoing && !m.isSystem && (!hasSignature || isCmdTagged);
+
+          if (this._roomMode === 'command') {
+            return (m.isOutgoing && isCmdTagged) || isFromRoomNode;
+          }
+          // Chat tab: show participant messages (with signature) and outgoing chat messages
+          return !(m.isOutgoing && isCmdTagged) && !isFromRoomNode;
+        })
+      : rawMessages;
+
+    if (
+      this._isRoomServer
+      && messages.length < 10
+      && rawMessages.length > 0
+      && !this._messageStore.loading
+      && !this._messageStore.loadingOlder
+      && this._messageStore.hasOlderMessages
+    ) {
+      queueMicrotask(() => this._messageStore?.loadOlderMessages());
+    }
+
+
     const renderItems = buildRenderItems(messages, {
       group_messages: this.config?.group_messages ?? true,
       group_timeout: this.config?.group_timeout ?? 300,
       show_date_separators: this.config?.show_date_separators ?? true,
     });
 
+    const encoder = new TextEncoder();
+    const prefixBytes =
+      !this._isContact() && this.config?.node_name
+        ? encoder.encode(`${this.config.node_name}: `).length
+        : 0;
+    const maxBytes = 150 - prefixBytes;
+    const usedBytes = new TextEncoder().encode(this._inputText).length;
+    const isNearLimit = usedBytes >= maxBytes - 15;
+    const isOverLimit = usedBytes > maxBytes;
+
     return html`
-      <div class="chat-container" @reply-to-sender=${this._onReplyToSender} @scroll=${this._onChatScroll}>
+      <div class="chat-container ${this._isShellConversation? 'shell-mode': ''}" @reply-to-sender=${this._onReplyToSender} @scroll=${this._onChatScroll}>
         ${this._messageStore.loadingOlder
           ? html`<div class="loading-older"><div class="loading-spinner"></div></div>`
           : html``}
@@ -869,34 +1229,112 @@ export class ChatPage extends LitElement {
         ${this._renderItemsWithDivider(renderItems)}
         ${this._renderNewMessagesIndicator()}
       </div>
-      <div class="input-area">
-        <textarea
-          placeholder="Type a message..."
-          aria-label="Message text. Press Enter to send, Shift+Enter for newline."
-          .value=${this._inputText}
-          @input=${(e: Event) => {
-            const ta = e.target as HTMLTextAreaElement;
-            this._inputText = ta.value;
-          }}
-          @keydown=${(e: KeyboardEvent) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              this._sendMessage();
-            }
-          }}
-          ?disabled=${this._sending || !this.selectedId}></textarea>
+      <div class="input-area ${this._isShellConversation ? 'zsh-input-area' : ''} ${isOverLimit ? 'input-over' : isNearLimit ? 'input-warn' : ''}">
+        ${this._isShellConversation && this._menuOpen && this._suggestions.length > 0
+          ? html`
+              <div class="zsh-completions-menu" role="listbox" aria-label="Command completions">
+                ${this._suggestions.map((item, idx) => {
+                  const isSelected = idx === Math.min(this._selectedIdx, this._suggestions.length - 1);
+                  return html`
+		  <button
+                    type="button"
+                    class="zsh-completion-item ${isSelected ? 'selected' : ''} ${item.dangerous ? 'dangerous' : ''}"
+                    role="option"
+                    aria-selected=${isSelected}
+                    @mousedown=${(e: MouseEvent) => {
+                      e.preventDefault();
+                      this._applySuggestion(item);
+                    }}>
+                    <span class="zsh-completion-left">
+                      <span class="zsh-completion-cmd">${item.displayLabel}</span>
+                      ${item.argHint ? html`<span class="zsh-completion-args">${item.argHint}</span>` : ''}
+                    </span>
+                    ${item.description ? html`<span class="zsh-completion-desc">${item.description}</span>` : ''}
+                  </button>
+                  `;
+                })}
+              </div>
+            `
+          : ''}
+        ${this._isShellConversation ? html`<span class="zsh-input-prompt">❯</span>` : ''}
+        <div class="textarea-wrap">
+          ${this._isShellConversation && this._ghostText
+            ? html`
+                <div class="zsh-ghost-backdrop" aria-hidden="true">
+                  <span class="zsh-ghost-typed">${this._inputText}</span><span class="zsh-ghost-suffix">${this._ghostText.suffix}</span><span class="zsh-ghost-hint">${this._ghostText.hint}</span>
+                </div>
+              `
+            : ''}
+          <textarea
+            .rows=${this._isShellConversation ? 1 : 2}
+            placeholder=${this._isShellConversation ? 'enter command...' : 'Type a message...'}
+            aria-label="Message text. Press Enter to send, Shift+Enter for newline."
+            .value=${this._inputText}
+            @input=${(e: Event) => {
+              const ta = e.target as HTMLTextAreaElement;
+              this._inputText = ta.value;
+              this._selectedIdx = 0;
+              if (this._isShellConversation) {
+                this._menuOpen = ta.value.trim().length > 0;
+              }
+            }}
+            @blur=${() => {
+              this._menuOpen = false;
+            }}
+            @keydown=${(e: KeyboardEvent) => this._handleShellKeydown(e)}
+            ?disabled=${this._sending || !this.selectedId}></textarea>
+	  <div class="char-counter">${usedBytes}/${maxBytes}</div>
+        </div>
         <button
           class="send-button"
-          aria-label="Send message"
+          aria-label=${this._isShellConversation ? 'Run command' : 'Send message'}
           @click=${() => this._sendMessage()}
           ?disabled=${this._sending || !this.selectedId || !this._inputText.trim()}>
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M16.6915026,12.4744748 L3.50612381,13.2599618 C3.19218622,13.2599618 3.03521743,13.4170592 3.03521743,13.5741566 L1.15159189,20.0151496 C0.8376543,20.8006365 0.99,21.89 1.77946707,22.52 C2.41,22.99 3.50612381,23.1 4.13399899,22.8429026 L21.714504,14.0454487 C22.6563168,13.5741566 23.1272231,12.6315722 22.9702544,11.6889879 L4.13399899,1.16151496 C3.34915502,0.9 2.40734225,0.9 1.77946707,1.4429026 C0.994623095,2.0752101 0.837654326,3.00778453 1.15159189,3.98029867 L3.03521743,10.4212916 C3.03521743,10.5783889 3.19218622,10.7354863 3.50612381,10.7354863 L16.6915026,11.5209733 C16.6915026,11.5209733 17.1624089,11.5209733 17.1624089,12.0492776 C17.1624089,12.5775818 16.6915026,12.4744748 16.6915026,12.4744748 Z"/>
-          </svg>
+          ${this._isShellConversation
+            ? html`<span>↵</span>`
+            : html`
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M16.6915026,12.4744748 L3.50612381,13.2599618 C3.19218622,13.2599618 3.03521743,13.4170592 3.03521743,13.5741566 L1.15159189,20.0151496 C0.8376543,20.8006365 0.99,21.89 1.77946707,22.52 C2.41,22.99 3.50612381,23.1 4.13399899,22.8429026 L21.714504,14.0454487 C22.6563168,13.5741566 23.1272231,12.6315722 22.9702544,11.6889879 L4.13399899,1.16151496 C3.34915502,0.9 2.40734225,0.9 1.77946707,1.4429026 C0.994623095,2.0752101 0.837654326,3.00778453 1.15159189,3.98029867 L3.03521743,10.4212916 C3.03521743,10.5783889 3.19218622,10.7354863 3.50612381,10.7354863 L16.6915026,11.5209733 C16.6915026,11.5209733 17.1624089,11.5209733 17.1624089,12.0492776 C17.1624089,12.5775818 16.6915026,12.4744748 16.6915026,12.4744748 Z"/>
+                </svg>
+              `}
         </button>
       </div>
     `;
   }
+
+  private _resolveDividerIdx(renderItems: Array<any>): number | null {
+    const directIdx = this.unread.dividerAfterGroupIdx(renderItems);
+    if (directIdx !== null || !this._isRoomServer || this._roomMode !== 'chat' || !this._currentEntityId || !this._messageStore) {
+      return directIdx;
+    }
+  
+    // If the stored lastRead ID was a command message (filtered out of chat mode),
+    // find where that message sits in the full store and place the divider
+    // before the first visible chat group after it.
+    const anchorId = this.lastRead[this._currentEntityId];
+    if (!anchorId) return null;
+  
+    const allMsgs = this._messageStore.messages;
+    const anchorStoreIdx = allMsgs.findIndex((m) => String(m.id) === String(anchorId));
+    if (anchorStoreIdx === -1) return null;
+  
+    const idToStoreIdx = new Map<string, number>();
+    allMsgs.forEach((m, idx) => idToStoreIdx.set(String(m.id), idx));
+  
+    let groupIdx = 0;
+    for (const item of renderItems) {
+      if (item.type === 'date-separator') continue;
+      const msgs = item.group.messages;
+      const firstMsgIdx = idToStoreIdx.get(String(msgs[0]?.id)) ?? -1;
+      if (firstMsgIdx > anchorStoreIdx) {
+        return groupIdx;
+      }
+      groupIdx++;
+    }
+  
+    return null;
+  }
+
 
   private _renderItemsWithDivider(renderItems: Array<any>) {
     const results: any[] = [];
@@ -911,7 +1349,7 @@ export class ChatPage extends LitElement {
     // the anchor, skipping the user's own trailing sends) — and the
     // count-based fallback for an absent / pruned anchor. chat-page
     // just consumes the resulting group index.
-    const dividerAtMessageIdx = this.unread.dividerAfterGroupIdx(renderItems);
+    const dividerAtMessageIdx = this._resolveDividerIdx(renderItems);
 
     for (const item of renderItems) {
       if (item.type === 'date-separator') {
@@ -936,7 +1374,9 @@ export class ChatPage extends LitElement {
       results.push(html`
         <meshcore-message-bubble
           .group=${item.group}
-          .timestampFormat=${this.config?.timestamp_format ?? 'relative'}></meshcore-message-bubble>
+          .timestampFormat=${this.config?.timestamp_format ?? 'relative'}
+          .isShellMode=${this._isShellConversation}
+          .targetName=${this._getConversationName()}></meshcore-message-bubble>
       `);
       messageIdx++;
     }
@@ -1116,6 +1556,217 @@ export class ChatPage extends LitElement {
     }
   }
 
+
+  private _formatParamHint(cmd: CommandDef, skipFirstParam = false): string {
+    const params = skipFirstParam ? (cmd.params ?? []).slice(1) : (cmd.params ?? []);
+    return params
+      .map((p) => {
+        const choices = p.options ?? p.selectOptions?.map((o) => String(o.value));
+        const label = choices ? choices.join('|') : p.name;
+        return p.required ? `<${label}>` : `[${label}]`;
+      })
+      .join(' ');
+  }
+
+  private get _suggestions(): SuggestionItem[] {
+    if (!this._isShellConversation) return [];
+    const trimmedStart = this._inputText.replace(/^\s+/, '');
+    if (!trimmedStart) return [];
+
+    const lower = trimmedStart.toLowerCase();
+
+    // 1. Parameter value completions (e.g. "set loop.detect " -> off|minimal|moderate|strict)
+    const exactCmd = [...REMOTE_COMMANDS]
+      .sort((a, b) => b.name.length - a.name.length)
+      .find((c) => lower === c.name || lower.startsWith(`${c.name} `));
+
+    if (exactCmd && trimmedStart.length > exactCmd.name.length) {
+      const firstParam = exactCmd.params?.[0];
+      const choices =
+        firstParam?.options ??
+        firstParam?.selectOptions?.map((o) => String(o.value));
+
+      if (firstParam && choices) {
+        const typedArg = trimmedStart.slice(exactCmd.name.length).trimStart();
+        if (!typedArg.includes(' ')) {
+          const restHint = this._formatParamHint(exactCmd, true);
+          return choices
+            .filter((opt) => opt.toLowerCase().startsWith(typedArg.toLowerCase()))
+            .map((opt) => ({
+              insertText: `${exactCmd.name} ${opt}`,
+              displayLabel: `${exactCmd.name} ${opt}`,
+              description:
+                firstParam.selectOptions?.find((o) => String(o.value) === opt)?.label ??
+                firstParam.description,
+              argHint: restHint,
+              dangerous: exactCmd.dangerous,
+            }));
+        }
+      }
+      return [];
+    }
+
+    // 2. Command completions
+    const prefixMatches = REMOTE_COMMANDS.filter((c) =>
+      c.name.toLowerCase().startsWith(lower)
+    );
+    const matches =
+      prefixMatches.length > 0
+        ? prefixMatches
+        : REMOTE_COMMANDS.filter((c) => c.name.toLowerCase().includes(lower));
+
+    return matches.map((cmd) => ({
+      insertText: cmd.params?.length ? `${cmd.name} ` : cmd.name,
+      displayLabel: cmd.name,
+      description: cmd.description,
+      argHint: this._formatParamHint(cmd),
+      dangerous: cmd.dangerous,
+    }));
+  }
+
+  private get _ghostText(): { suffix: string; hint: string } | null {
+    if (!this._isShellConversation) return null;
+    const input = this._inputText;
+    if (!input || input.includes('\n')) return null;
+
+    const trimmedStart = input.replace(/^\s+/, '');
+    if (!trimmedStart) return null;
+
+    const lower = trimmedStart.toLowerCase();
+    const first = this._suggestions[0];
+
+    if (first && first.insertText.toLowerCase().startsWith(lower)) {
+      return {
+        suffix: first.insertText.slice(trimmedStart.length),
+        hint: first.argHint ? (first.insertText.endsWith(' ') ? first.argHint : ` ${first.argHint}`) : '',
+      };
+    }
+
+    const exact = REMOTE_COMMANDS.find((c) => lower === `${c.name} `);
+    if (exact?.params?.length) {
+      return { suffix: '', hint: this._formatParamHint(exact) };
+    }
+
+    return null;
+  }
+
+  private _applySuggestion(item: SuggestionItem) {
+    this._inputText = item.insertText;
+    this._menuOpen = false;
+    this._selectedIdx = 0;
+    this.updateComplete.then(() => {
+      const ta = this.renderRoot.querySelector('textarea');
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      }
+    });
+  }
+
+ 
+  private _commonPrefix(strings: string[]): string {
+    let prefix = strings[0] ?? '';
+    for (let i = 1; i < strings.length; i++) {
+      while (!strings[i].toLowerCase().startsWith(prefix.toLowerCase())) {
+        prefix = prefix.slice(0, -1);
+        if (!prefix) return '';
+      }
+    }
+    return prefix;
+  }
+
+  private _handleShellKeydown(e: KeyboardEvent) {
+    if (!this._isShellConversation) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        this._sendMessage();
+      }
+      return;
+    }
+
+    const list = this._suggestions;
+    const ghost = this._ghostText;
+
+    // Tab: 1st Tab expands common prefix (or primes menu); 2nd Tab on unchanged text accepts selection
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      if (!list.length) return;
+
+      const clampedIdx = Math.min(this._selectedIdx, list.length - 1);
+
+      // Single match: accept immediately
+      if (list.length === 1) {
+        this._lastTabInput = null;
+        this._applySuggestion(list[0]);
+        return;
+      }
+
+      const common = this._commonPrefix(list.map((item) => item.insertText));
+      const trimmedStart = this._inputText.replace(/^\s+/, '');
+      const leadingSpaces = this._inputText.slice(0, this._inputText.length - trimmedStart.length);
+
+      // 1. If suggestions share a longer common prefix, expand to it and record this text
+      if (common.length > trimmedStart.length) {
+        this._inputText = leadingSpaces + common;
+        this._menuOpen = true;
+        this._selectedIdx = 0;
+        this._lastTabInput = this._inputText;
+        return;
+      }
+
+      // 2. First Tab at this exact text: open/keep menu open and record this text (do NOT accept yet)
+      if (this._lastTabInput !== this._inputText) {
+        this._menuOpen = true;
+        this._lastTabInput = this._inputText;
+        return;
+      }
+
+      // 3. Second Tab at the exact same text: accept the highlighted suggestion
+      this._lastTabInput = null;
+      this._applySuggestion(list[clampedIdx]);
+      return;
+    }
+
+
+    // Right Arrow at end of line: accept inline ghost text
+    if (e.key === 'ArrowRight' && ghost?.suffix) {
+      const ta = e.target as HTMLTextAreaElement;
+      if (ta.selectionStart === ta.value.length && ta.selectionEnd === ta.value.length) {
+        e.preventDefault();
+        this._inputText += ghost.suffix;
+        this._menuOpen = false;
+        return;
+      }
+    }
+
+    // Up / Down: navigate completion menu when open
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && this._menuOpen && list.length > 0) {
+      e.preventDefault();
+      const delta = e.key === 'ArrowDown' ? 1 : -1;
+      this._selectedIdx = (this._selectedIdx + delta + list.length) % list.length;
+      return;
+    }
+
+    if (e.key === 'Escape' && this._menuOpen) {
+      e.preventDefault();
+      this._menuOpen = false;
+      return;
+    }
+
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const clampedIdx = Math.min(this._selectedIdx, list.length - 1);
+      if (this._menuOpen && list[clampedIdx]) {
+        this._applySuggestion(list[clampedIdx]);
+        return;
+      }
+      this._menuOpen = false;
+      this._sendMessage();
+    }
+  }
+
+
+
   private async _sendMessage() {
     if (this._sending || !this._inputText.trim() || !this.selectedId || !this.hass || !this.config) {
       return;
@@ -1131,13 +1782,14 @@ export class ChatPage extends LitElement {
     const entryId = this.config.entry_id;
     const store = this._messageStore;
     const text = this._inputText.trim();
+    const isCmd = this._isShellConversation && this._isRoomServer;
     this._inputText = '';
     let optimisticId: string | undefined;
 
     try {
       // Add optimistic message
       if (this._messageStore) {
-        optimisticId = this._messageStore.addOptimisticMessage(this.config.node_name, text);
+        optimisticId = this._messageStore.addOptimisticMessage(this.config.node_name, text, isCmd);
         // Always scroll to bottom after sending
         this._pendingScroll = 'bottom';
       }
@@ -1148,7 +1800,11 @@ export class ChatPage extends LitElement {
       // coordinator. Without entry_id, the upstream service sends from
       // whichever coordinator is iterated first in `hass.data[meshcore]`.
       if (this._isContact()) {
-        await sendDirectMessage(this.hass, selectedId, text, entryId);
+	if (isCmd){
+          await sendCommand(this.hass, selectedId, text, entryId);
+	} else {
+          await sendDirectMessage(this.hass, selectedId, text, entryId);
+	}
       } else {
         const idx = parseInt(selectedId, 10);
         if (isNaN(idx) || idx < 0 || idx > 255) {
@@ -1242,6 +1898,26 @@ export class ChatPage extends LitElement {
     });
     if (!conv) return this.selectedId;
     return 'pubkey_prefix' in conv ? (conv as Contact).adv_name : (conv as Channel).name;
+  }
+
+  private get _activeContact(): Contact | undefined {
+    if (!this.selectedId) return undefined;
+    const conv = this.conversations.find((c) => {
+      if ('pubkey_prefix' in c) return (c as Contact).pubkey_prefix === this.selectedId;
+      return String((c as Channel).channel_idx) === this.selectedId;
+    });
+    return conv && 'pubkey_prefix' in conv ? (conv as Contact) : undefined;
+  }
+
+  private get _isRoomServer(): boolean {
+    return this._activeContact?.type === 3;
+  }
+
+  private get _isShellConversation(): boolean {
+    const type = this._activeContact?.type;
+    if (type === 2 || type === 4) return true; // Repeaters & Sensors
+    if (type === 3) return this._roomMode === 'command'; // Room Servers toggleable
+    return false;
   }
 
   /**

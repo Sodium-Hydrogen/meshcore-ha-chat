@@ -82,6 +82,7 @@ export interface StoredMessage {
   channel?: string;
   channel_idx?: number;
   pubkey_prefix?: string;
+  is_command?: boolean;
   outgoing: boolean;
   rx_log_data: Array<Record<string, unknown>>;
   delivery_status: 'pending' | 'sent' | 'delivered' | 'failed';
@@ -136,6 +137,8 @@ export interface ChatMessage {
   isOutgoing: boolean;
   /** true if unparseable (no sender:message pattern) */
   isSystem: boolean;
+
+  isCommand?: boolean;
   /** Original logbook message text */
   raw: string;
   /** Extracted @[Name] and @Name mentions */

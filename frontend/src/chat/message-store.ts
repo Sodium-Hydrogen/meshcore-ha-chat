@@ -249,7 +249,7 @@ export class MessageStore {
   /**
    * Add a local optimistic message immediately (before API confirmation).
    */
-  addOptimisticMessage(sender: string, text: string): string {
+  addOptimisticMessage(sender: string, text: string, isCommand = false): string {
     const now = new Date();
     const tempId = `optimistic_${now.getTime()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -260,6 +260,7 @@ export class MessageStore {
       timestamp: now,
       isOutgoing: true,
       isSystem: false,
+      isCommand,
       raw: `${sender}: ${text}`,
       mentions: [],
     };
@@ -711,6 +712,7 @@ export class MessageStore {
     const author = (eventData.author as string | null | undefined) ?? undefined;
     const signature = (eventData.signature as string | undefined) || undefined;
     const isOutgoing = typeof eventData.outgoing === 'boolean' ? eventData.outgoing : sender === this._config.node_name;
+    const isCommand = Boolean(eventData.isCommand ?? eventData.is_command ?? eventData.txt_type === 1);
 
     // Skip outgoing messages — they are already shown via the optimistic path.
     // Update delivery status on the existing optimistic message instead.
@@ -821,6 +823,7 @@ export class MessageStore {
           timestamp,
           isOutgoing: false,
           isSystem: false,
+	  isCommand,
           raw: text,
           mentions,
           rxLogData: rxLogData && rxLogData.length > 0 ? rxLogData : undefined,

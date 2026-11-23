@@ -21,6 +21,9 @@ export class MessageBubble extends LitElement {
   @property({ type: Object }) group?: MessageGroup;
   @property({ type: Object }) message?: ChatMessage;
   @property({ type: String }) timestampFormat: 'relative' | 'time' | 'datetime' = 'relative';
+  /** Set to true when rendering conversations with repeaters or sensors */
+  @property({ type: Boolean }) isShellMode = false;
+  @property({ type: String }) targetName = '';
 
   @state() private _selectedMessage: ChatMessage | null = null;
 
@@ -39,6 +42,9 @@ export class MessageBubble extends LitElement {
       display: block;
     }
 
+    /* =====================================================================
+     * STANDARD CHAT BUBBLE STYLES
+     * ===================================================================== */
     .message-group {
       margin-bottom: 8px;
       display: flex;
@@ -202,6 +208,254 @@ export class MessageBubble extends LitElement {
       white-space: nowrap;
     }
 
+    /* =====================================================================
+     * ZSH / POWERLEVEL10K TERMINAL STYLES (SENSORS & REPEATERS)
+     * ===================================================================== */
+    .zsh-group {
+      font-family: 'Fira Code', 'JetBrains Mono', 'MesloLGS NF', 'Cascadia Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.45;
+      background: var(--zsh-bg, #1a1b26);
+      color: var(--zsh-fg, #c0caf5);
+      /*padding: 4px 10px;*/
+      /*border-left: 2px solid var(--zsh-border, #292e42);*/
+    }
+
+    .zsh-entry {
+      padding: 15px 6px 4px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.12s ease;
+    }
+
+    .zsh-entry:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .zsh-entry.search-highlight {
+      animation: highlight-flash 2.5s ease-out;
+    }
+
+    /* Powerline-style prompt header */
+    .zsh-prompt-line {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 2px;
+      font-size: 12px;
+    }
+
+    .zsh-segment-user {
+      background: #7aa2f7;
+      color: #15161e;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 3px;
+    }
+
+    /* Powerlevel10k two-sided prompt header with hard outer edges & inner arrows */
+    .zsh-prompt-line {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      margin-bottom: 3px;
+      font-size: 11.5px;
+      overflow: hidden;
+    }
+
+    .zsh-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 20px;
+      background: #292e42;
+      color: #c0caf5;
+      padding: 0 8px;
+      white-space: nowrap;
+    }
+
+    @container (max-width: 500px) {
+      .zsh-stdout-meta,
+      .zsh-pill .zsh-extra-details {
+        display: none;
+      }
+    }
+
+
+    /* Hard outer edges */
+    .zsh-pill-left {
+      border-radius: 3px 0 0 3px;
+    }
+
+    .zsh-pill-right {
+      border-radius: 0 3px 3px 0;
+    }
+
+    /* Inner right-pointing Powerline arrow (left side) */
+    .zsh-arrow-right {
+      width: 0;
+      height: 0;
+      border-top: 10px solid transparent;
+      border-bottom: 10px solid transparent;
+      border-left: 8px solid #292e42;
+      flex-shrink: 0;
+    }
+
+    /* Inner left-pointing Powerline arrow (right side) */
+    .zsh-arrow-left {
+      width: 0;
+      height: 0;
+      border-top: 10px solid transparent;
+      border-bottom: 10px solid transparent;
+      border-right: 8px solid #292e42;
+      flex-shrink: 0;
+    }
+
+    .zsh-pill-path {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: #7aa2f7;
+      font-weight: 700;
+    }
+
+    .zsh-pill-path svg {
+      width: 2.5em;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: currentColor;
+    }
+
+    .zsh-pill-sep {
+      color: #565f89;
+    }
+
+    .zsh-pill-branch {
+      color: #9ece6a;
+      font-weight: 600;
+    }
+
+    /* Light horizontal rule connecting the two inner arrows */
+    .zsh-prompt-fill {
+      flex: 1;
+      height: 1px;
+      background: rgba(192, 202, 245, 0.22);
+      margin: 0 6px;
+      min-width: 12px;
+    }
+
+    .zsh-segment-node {
+      background: var(--sender-color, #bb9af7);
+      color: #15161e;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 3px;
+    }
+
+    .zsh-segment-meta {
+      color: #565f89;
+      font-size: 11px;
+    }
+
+    .zsh-status-ok {
+      color: #9ece6a;
+      font-weight: 600;
+    }
+
+    .zsh-status-warn {
+      color: #e0af68;
+      font-weight: 600;
+    }
+
+    .zsh-status-err {
+      color: #f7768e;
+      font-weight: 600;
+    }
+
+    /* Command input (Outgoing) */
+    .zsh-command-line {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      color: #7dcfff;
+    }
+
+    .zsh-prompt-symbol {
+      color: #9ece6a;
+      font-weight: 700;
+      user-select: none;
+    }
+
+    .zsh-command-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #c0caf5;
+    }
+
+        /* Stdout / Telemetry output (Incoming) — stdout left, RPROMPT metadata flush right */
+    .zsh-stdout-entry {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 5px 6px 15px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.12s ease;
+    }
+
+    .zsh-stdout-entry:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .zsh-stdout-body {
+      flex: 1;
+      min-width: 0;
+      margin: 0;
+      padding: 0;
+      font-family: inherit;
+      font-size: 13px;
+      line-height: 1.45;
+      color: #c0caf5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .zsh-stdout-meta {
+      flex-shrink: 0;
+      text-align: right;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #565f89;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    /* Subtle syntax highlighting for key: value telemetry & error lines */
+    .zsh-kv-key {
+      color: #7aa2f7;
+    }
+
+    .zsh-kv-val {
+      color: #9ece6a;
+    }
+
+    .zsh-kv-err {
+      color: #f7768e;
+      font-weight: 600;
+    }
+
+    .zsh-system-line {
+      color: #565f89;
+      font-style: italic;
+      font-size: 12px;
+      padding: 2px 0;
+    }
+
+    /* =====================================================================
+     * MESSAGE ACTION DIALOG
+     * ===================================================================== */
     .message-dialog-overlay {
       position: fixed;
       top: 0;
@@ -282,14 +536,145 @@ export class MessageBubble extends LitElement {
 
   render() {
     if (this.group) {
+      const useShell = this._shouldUseShellUI(this.group);
       return html`
-        ${this._renderGroup()}
+        ${useShell ? this._renderZshGroup() : this._renderGroup()}
         ${this._selectedMessage ? this._renderMessageDialog(this._selectedMessage) : html``}
       `;
     }
     return html``;
   }
 
+  /**
+   * Determines whether to use the zsh shell UI.
+   * Checks explicit `isShellMode` prop or inspects optional node metadata on the group.
+   */
+  private _shouldUseShellUI(g: MessageGroup): boolean {
+    if (this.isShellMode) return true;
+    const rawGroup = g as unknown as Record<string, unknown>;
+    const nodeType = String(rawGroup.nodeType ?? rawGroup.deviceType ?? '').toLowerCase();
+    return nodeType === 'repeater' || nodeType === 'sensor' || nodeType === 'room_server';
+  }
+
+  /* =======================================================================
+   * ZSH SHELL RENDERING
+   * ======================================================================= */
+  private _renderZshGroup() {
+    if (!this.group) return html``;
+    const g = this.group;
+
+    let senderColor: string | undefined;
+    if (g.messages.length > 0) {
+      const firstMsg = g.messages[0];
+      senderColor = firstMsg.senderColor || senderColorFromPrefix(g.sender);
+    }
+
+    return html`
+      <div class="zsh-group" style=${senderColor ? `--sender-color: ${senderColor}` : ''}>
+        ${g.messages.map((msg) => this._renderZshLine(msg, g.sender))}
+      </div>
+    `;
+  }
+
+  private _renderZshLine(msg: ChatMessage, groupSender: string) {
+    const ts = formatTimestamp(msg.timestamp, this.timestampFormat);
+
+    if (msg.isSystem) {
+      return html`
+        <div class="zsh-system-line" data-msg-id=${msg.id}>
+          # [${ts}] ${msg.text}
+        </div>
+      `;
+    }
+
+    // Outgoing command executed against repeater/sensor
+    if (msg.isOutgoing) {
+      const statusLabel = msg.deliveryStatus && !msg.isCommand ? this._getStatusLabel(msg.deliveryStatus) : '';
+      const statusClass =
+        statusLabel === 'Failed'
+          ? 'zsh-status-err'
+          : statusLabel === 'Waiting...' || statusLabel === 'Unheard'
+            ? 'zsh-status-warn'
+            : 'zsh-status-ok';
+      const targetNode = (groupSender || 'mesh-node').toLowerCase().replace(/\s+/g, '-');
+
+      return html`
+        <div class="zsh-entry" data-msg-id=${msg.id} @click=${(e: Event) => { e.stopPropagation(); this._selectedMessage = msg; }}>
+          <div class="zsh-prompt-line">
+            <span class="zsh-pill zsh-pill-left">
+              <span class="zsh-pill-path">
+		<svg xmlns="http://w3.org" viewBox="0 0 24 24" width="48" height="48" fill="currentColor" aria-hidden="true" >
+		  <path d="M 12 10.55 A 1.45 1.45 0 1 0 12 13.45 A 1.45 1.45 0 1 0 12 10.55 Z M 8.71 15.29 A 4.65 4.65 0 0 1 8.71 8.71 L 9.70 9.70 A 3.25 3.25 0 0 0 9.70 14.30 Z M 6.59 17.41 A 7.65 7.65 0 0 1 6.59 6.59 L 7.58 7.58 A 6.25 6.25 0 0 0 7.58 16.42 Z M 15.29 8.71 A 4.65 4.65 0 0 1 15.29 15.29 L 14.30 14.30 A 3.25 3.25 0 0 0 14.30 9.70 Z M 17.41 6.59 A 7.65 7.65 0 0 1 17.41 17.41 L 16.42 16.42 A 6.25 6.25 0 0 0 16.42 7.58 Z" />
+		</svg>
+
+                <span class="zsh-pill-sep">│</span>
+                <span>~</span>
+              </span>
+            </span>
+            <span class="zsh-arrow-right"></span>
+            <span class="zsh-prompt-fill"></span>
+            <span class="zsh-arrow-left"></span>
+            <span class="zsh-pill zsh-pill-right">
+              ${statusLabel ? html`<span class=${statusClass}>${statusLabel.toLowerCase()}</span><span class="zsh-pill-sep">│</span>` : ''}
+              <span class="zsh-segment-meta">${ts}</span>
+	      <div class="zsh-extra-details">
+                <span class="zsh-pill-sep">│</span>
+                <span>${targetNode} @ ${this.targetName}</span>
+	      </div>
+            </span>
+          </div>
+          <div class="zsh-command-line">
+            <span class="zsh-prompt-symbol">❯</span>
+            <span class="zsh-command-text">${msg.text}</span>
+          </div>
+        </div>
+      `;
+    }
+
+
+    // Incoming response / telemetry output from repeater/sensor
+    const scopeLabel = msg.floodScope ? (msg.floodScope === '*' ? 'all-regions' : msg.floodScope) : '';
+    const rssiSnr = this._getQuickSignalBadge(msg);
+    const metaParts = [rssiSnr, scopeLabel, ts].filter(Boolean).join(' │ ');
+
+    return html`
+      <div class="zsh-stdout-entry" data-msg-id=${msg.id} @click=${(e: Event) => { e.stopPropagation(); this._selectedMessage = msg; }}>
+        <div class="zsh-stdout-body">${this._formatStdout(msg.text)}</div>
+        <div class="zsh-stdout-meta">${metaParts}</div>
+      </div>
+    `;
+
+  }
+
+  private _formatStdout(text: string) {
+    return text.split('\n').map((line, i, arr) => {
+      const suffix = i < arr.length - 1 ? '\n' : '';
+      // Highlight error/unknown command lines in red
+      if (/^((err|error|unknown|invalid|denied)\b|\?\?: )/i.test(line.trim())) {
+        return html`<span class="zsh-kv-err">${line}</span>${suffix}`;
+      }
+      // Highlight "Key: Value" (colon must be followed by space) or "key=value" pairs
+      const kvMatch = line.match(/^(\s*[A-Za-z_][\w.\-/ ]*?)(:\s+|=)(.+)$/);
+      if (kvMatch) {
+        return html`<span class="zsh-kv-key">${kvMatch[1]}</span>${kvMatch[2]}<span class="zsh-kv-val">${kvMatch[3]}</span>${suffix}`;
+      }
+      return `${line}${suffix}`;
+    });
+  }
+
+
+  private _getQuickSignalBadge(msg: ChatMessage): string {
+    if (!msg.rxLogData || msg.rxLogData.length === 0) return '';
+    const latest = msg.rxLogData[msg.rxLogData.length - 1];
+    const parts: string[] = [];
+    if (latest.snr !== undefined) parts.push(`SNR:${latest.snr}dB`);
+    if (latest.rssi !== undefined) parts.push(`RSSI:${latest.rssi}`);
+    return parts.join(' ');
+  }
+
+  /* =======================================================================
+   * STANDARD CHAT RENDERING
+   * ======================================================================= */
   private _renderGroup() {
     if (!this.group) return html``;
 
@@ -328,20 +713,39 @@ export class MessageBubble extends LitElement {
 
     const statusLabel = msg.isOutgoing && msg.deliveryStatus ? this._getStatusLabel(msg.deliveryStatus) : '';
     const ts = formatTimestamp(msg.timestamp, this.timestampFormat);
+    // Automatically collapse information when the bubble is small.
+    const verbose = msg.text.length > 20;
     // Inbound region scope — incoming bubbles only. "*" → "🌐 all regions",
     // a region name renders verbatim, absent renders nothing. The outbound
     // scope is shown by the thread-header chip, so outgoing is unaffected.
     const scopeLabel =
       !msg.isOutgoing && !msg.isSystem && msg.floodScope
         ? msg.floodScope === '*'
-          ? '🌐 all regions'
+          ? '🌐' + (verbose ? ' all regions' : '')
           : msg.floodScope
         : '';
+    // Display the hop count for the first received copy of a message.
+    const hopCount = msg.rxLogData && msg.rxLogData.length > 0 ? msg.rxLogData[0].hop_count : undefined; 
+    const hopLabel =
+      hopCount == null || msg.isOutgoing
+        ? ''
+        : hopCount === 1
+          ? '1 hop'
+          : `${hopCount} hops`
+
 
     return html`
       <div class=${this._classMap(bubbleClasses)} data-msg-id=${msg.id} @click=${(e: Event) => { e.stopPropagation(); this._selectedMessage = msg; }}>
         <div class="message-text">${this._renderTextWithMentions(msg.text, msg.mentions)}</div>
-        <div class="timestamp">${statusLabel ? html`<span class="delivery-status">${statusLabel}</span> · ` : ''}${ts}${scopeLabel ? html` · <span class="flood-scope">${scopeLabel}</span>` : ''}</div>
+        <div class="timestamp">${statusLabel ? 
+            html`<span class="delivery-status">${statusLabel}</span> · ` :
+            ''
+	}${ts}${scopeLabel ?
+            html` · <span class="flood-scope">${scopeLabel}</span>` :
+            ''
+        }${hopLabel ? 
+	    html` · <span class="hop-count">${hopLabel}</span>` : ''
+	}</div>
       </div>
     `;
   }
@@ -410,31 +814,22 @@ export class MessageBubble extends LitElement {
       : '';
 
     const hasRoute = msg.rxLogData && msg.rxLogData.length > 0;
-    const routeText = hasRoute
-      ? msg.rxLogData!
-          .map((e) => {
-            const nodes = e.path_nodes as string[] | undefined;
-            const hops = e.hop_count as number | undefined;
-            const snr = e.snr as number | undefined;
-            const rssi = e.rssi as number | undefined;
-            const parts: string[] = [];
-            if (nodes && nodes.length > 0) {
-              parts.push(nodes.map((n: string) => n.substring(0, 4).toUpperCase()).join(' > '));
-            } else if (hops !== undefined) {
-              parts.push(`${hops} hop${hops !== 1 ? 's' : ''}`);
-            } else {
-              // No path_nodes / hop_count → packet was heard directly by
-              // the local node. Label as "0 hops" rather than "direct" so
-              // it isn't confusable with the "direct message" message-type
-              // for channel broadcasts that happened to be in radio range.
-              parts.push('0 hops');
-            }
-            if (snr !== undefined) parts.push(`SNR: ${snr}`);
-            if (rssi !== undefined) parts.push(`RSSI: ${rssi}`);
-            return parts.join(' · ');
-          })
-          .join(' | ')
-      : '';
+    const routes = hasRoute
+      ? msg.rxLogData!.map((e) => {
+          const nodes = ((e.path_nodes as string[]) ?? []).map((n) => n.slice(0, 4).toUpperCase());
+          const hopCount = nodes.length || (e.hop_count as number | undefined) || 0;
+          const hopsText = `${hopCount} hop${hopCount !== 1 ? 's' : ''}`;
+          const path = nodes.join(' > ');
+          const snr = e.snr !== undefined ? `SNR: ${e.snr}` : '';
+          const rssi = e.rssi !== undefined ? `RSSI: ${e.rssi}` : '';
+
+          return {
+            label: [path ? path : hopsText, snr, rssi].filter(Boolean).join(' · '),
+            header: [hopsText, snr, rssi].filter(Boolean).join(' · '),
+            path,
+          };
+        })
+      : [];
 
     const fullDateTime = msg.timestamp.toLocaleString(undefined, {
       weekday: 'short',
@@ -470,17 +865,18 @@ export class MessageBubble extends LitElement {
                 </div>
               `
             : html``}
-          ${hasRoute
-            ? html`
-                <div class="message-dialog-route" @click=${() => this._copyText(routeText)}>
-                  Route: ${routeText}
+	    ${routes.map(
+              (r, i) => html`
+                <div class="message-dialog-route" @click=${() => this._copyText(r.label)}>
+                  <div>Route${routes.length > 1 ? ` ${i + 1}` : ''}: ${r.header}</div>
+                  ${r.path ? html`<div>${r.path}</div>` : ''}
                 </div>
-              `
-            : html``}
+              `,
+            )}
           <div style=${footerStyle}>
             ${msg.isOutgoing ? 'Sent' : 'Received'}: ${fullDateTime}
           </div>
-          ${msg.isOutgoing && msg.deliveryStatus
+          ${msg.isOutgoing && msg.deliveryStatus && !msg.isCommand
             ? html`
                 <div style=${footerStyle}>
                   ${(msg.deliveryStatus.repeaterCount ?? 0) > 0

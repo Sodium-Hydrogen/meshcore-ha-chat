@@ -24,16 +24,20 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EVENT_CALL_SERVICE
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 
 from .const import (
     DOMAIN,
+    ENTITY_DOMAIN_BINARY_SENSOR,
     EVENT_MESHCORE_CONNECTED,
     EVENT_MESHCORE_DELIVERY_UPDATE,
     EVENT_MESHCORE_DISCONNECTED,
@@ -49,6 +53,8 @@ from .utils import (
     hoist_flood_scope,
     wildcard_global_allowlisted,
     message_sender,
+    format_entity_id,
+    sanitize_name,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -244,6 +250,10 @@ async def async_setup_entry(
         _make_delivery_update_handler(hass, entry.entry_id),
     ))
     entry.async_on_unload(hass.bus.async_listen(
+        EVENT_CALL_SERVICE,
+        _make_send_cmd_handler(hass, entry.entry_id),
+    ))
+    entry.async_on_unload(hass.bus.async_listen(
         EVENT_MESHCORE_CONNECTED,
         _make_connection_state_handler(hass, entry.entry_id, connected=True),
     ))
@@ -401,6 +411,7 @@ def _make_message_handler(hass: HomeAssistant, entry_id: str):
             "collecting",
             "author",
             "signature",
+            "is_command",
         ):
             if k in data:
                 record[k] = data[k]
@@ -470,6 +481,151 @@ def _make_message_handler(hass: HomeAssistant, entry_id: str):
                 )
 
     return _handle
+
+
+def _parse_send_cmd(raw_exec: str) -> tuple[str, str] | None:
+    """Parse `send_cmd('key', 'cmd')` or `send_cmd key "cmd"` into (pubkey_prefix, command)."""
+    key_arg = r"['\"]?([0-9a-fA-F]+)['\"]?"
+    paren_call = rf"\(\s*{key_arg}\s*,\s*(.*)\)"  # send_cmd('8275...', 'get name')
+    space_call = rf"{key_arg}\s+(.*)"           # send_cmd 8275... "get owner.info"
+    pattern = re.compile(rf"^send_cmd\s*(?:{paren_call}|{space_call})$", re.DOTALL)
+
+    match = pattern.match(raw_exec.strip())
+    if not match:
+        return None
+
+    p_key, p_cmd, s_key, s_cmd = match.groups()
+    key = p_key or s_key
+    cmd = (p_cmd if p_cmd is not None else s_cmd).strip()
+
+    if len(cmd) >= 2 and cmd[0] == cmd[-1] and cmd[0] in ("'", '"'):
+        cmd = cmd[1:-1]
+
+    return (key, cmd) if key and cmd else None
+
+def _find_meshcore_contact(
+    hass: HomeAssistant, entry_id: str, pubkey_prefix: str
+) -> tuple[dict[str, Any] | None, str]:
+    """Return (contact_dict, local_node_name) from the upstream meshcore integration."""
+    meshcore_data = hass.data.get(MESHCORE_DOMAIN) or {}
+    entries = [meshcore_data[entry_id]] if entry_id in meshcore_data else list(meshcore_data.values())
+
+    for item in entries:
+        coordinator = getattr(item, "coordinator", item)
+        api = getattr(coordinator, "api", None)
+        if api is None:
+            continue
+
+        contact = (
+            api.contact_by_prefix(pubkey_prefix)
+            if hasattr(api, "contact_by_prefix")
+            else api.mesh_core.get_contact_by_key_prefix(pubkey_prefix)
+        )
+        if contact:
+            self_info = getattr(api, "self_info", None) or {}
+            node_name = self_info.get("name") or "Me"
+            return contact, node_name
+
+    return None, "Me"
+
+def _resolve_send_cmd_entity_id(
+    hass: HomeAssistant, contact_pubkey: str, target_entry: str = ""
+) -> str:
+    """Build binary_sensor.meshcore_<local6>_<contact6>_messages from coordinator pubkey."""
+    contact_prefix6 = contact_pubkey[:6].lower()
+    _LOGGER.debug( "_resolve_send_cmd_entity_id: %s" , str(contact_prefix6))
+    if len(contact_prefix6) < 6:
+        return ""
+
+    coordinators = hass.data.get(MESHCORE_DOMAIN) or {}
+    if target_entry and target_entry in coordinators:
+        candidates = [coordinators[target_entry]]
+    else:
+        candidates = list(coordinators.values())
+
+    for coord in candidates:
+        local_pubkey = getattr(coord, "pubkey", "") or ""
+        _LOGGER.debug( "_resolve_send_cmd_entity_id: %s" , str(local_pubkey))
+        if len(local_pubkey) >= 6:
+            return format_entity_id(
+                ENTITY_DOMAIN_BINARY_SENSOR,
+                local_pubkey[:6].lower(),
+                contact_prefix6,
+                "messages",
+            )
+
+    return ""
+
+
+def _make_send_cmd_handler(hass: HomeAssistant, entry_id: str):
+    """Persist outgoing meshcore.execute_command ('send_cmd ...') calls to the store."""
+
+    async def _handle_send_cmd(event: Event) -> None:
+        if (
+            event.data.get("domain") != "meshcore"
+            or event.data.get("service") != "execute_command"
+        ):
+            return
+
+        store = _resolve_store(hass, entry_id)
+        if store is None:
+            return
+
+        service_data = event.data.get("service_data") or {}
+        target_entry = service_data.get("entry_id") or ""
+
+        parsed = _parse_send_cmd(service_data.get("command") or "")
+        _LOGGER.debug(
+            "_handle_send_cmd: %s, %s", str(parsed), str(service_data)
+        )
+        if not parsed:
+            return
+
+        pubkey_or_prefix, cmd_text = parsed
+        _LOGGER.debug(
+            "_handle_send_cmd: %s, %s", str(pubkey_or_prefix), str(cmd_text)
+        )
+        if not pubkey_or_prefix or not cmd_text:
+            return
+
+        pubkey_prefix = pubkey_or_prefix[:12]
+        contact, sender = _find_meshcore_contact(hass, target_entry, pubkey_prefix)
+        _LOGGER.debug(
+            "_handle_send_cmd: %s, %s", str(pubkey_prefix), str((contact, sender))
+        )
+        if not contact:
+            return
+
+        contact_name = contact.get("adv_name") or contact.get("name") or ""
+        resolved_pubkey = contact.get("public_key") or pubkey_prefix
+        entity_id = _resolve_send_cmd_entity_id(hass, resolved_pubkey, target_entry)
+        _LOGGER.debug(
+            "_handle_send_cmd: entity_id: %s", str(entity_id)
+        )
+        if not entity_id:
+            return
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        raw = f"{now_iso}|{sender}|{cmd_text}"
+        msg_id = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+
+        record: dict[str, Any] = {
+            "id": msg_id,
+            "sender": sender,
+            "text": cmd_text,
+            "timestamp": now_iso,
+            "message_type": "direct",
+            "pubkey_prefix": pubkey_prefix,
+            "outgoing": True,
+            "is_command": True,
+            "delivery_status": "sent",
+            "entry_id": entry_id,
+        }
+
+        await store.store_message(entity_id, record)
+
+    return _handle_send_cmd
+
 
 
 def _make_delivery_update_handler(hass: HomeAssistant, entry_id: str):

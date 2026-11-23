@@ -186,10 +186,10 @@ export class NodesPage extends LitElement {
 
     /* Inactive L2 left-edge accent — same alpha as the active border
        below for a clean active/inactive transition. */
-    .l2-btn.clients      { border-left: 2px solid rgba(76, 175, 80, 0.5); }
-    .l2-btn.repeaters    { border-left: 2px solid rgba(255, 152, 0, 0.5); }
-    .l2-btn.room_servers { border-left: 2px solid rgba(156, 39, 176, 0.5); }
-    .l2-btn.sensors      { border-left: 2px solid rgba(96, 125, 139, 0.5); }
+    .l2-btn.clients      { border-left: 2px solid rgb(from var(--clients-color) r g b / 0.5); }
+    .l2-btn.repeaters    { border-left: 2px solid rgb(from var(--repeaters-color) r g b / 0.5); }
+    .l2-btn.room_servers { border-left: 2px solid rgb(from var(--room_servers-color) r g b / 0.5); }
+    .l2-btn.sensors      { border-left: 2px solid rgb(from var(--sensors-color) r g b / 0.5); }
 
     /* When active, normalize the left edge back to 1px so the filled
        button doesn't have a chunkier left border than its other edges. */
@@ -200,24 +200,24 @@ export class NodesPage extends LitElement {
     /* Active L2: same translucent treatment as L1 active and the
        per-card avatar/category-badge. */
     .l2-btn.active.clients {
-      background: rgba(76, 175, 80, 0.15);
-      color: #388e3c;
-      border-color: rgba(76, 175, 80, 0.5);
+      background: rgb(from var(--clients-color) r g b / 0.15);
+      color: var(--clients-color);
+      border-color: rgb(from var(--clients-color) r g b / 0.5);
     }
     .l2-btn.active.repeaters {
-      background: rgba(255, 152, 0, 0.15);
-      color: #f57c00;
-      border-color: rgba(255, 152, 0, 0.5);
+      background: rgb(from var(--repeaters-color) r g b / 0.15);
+      color: var(--repeaters-color);
+      border-color: rgb(from var(--repeaters-color) r g b / 0.5);
     }
     .l2-btn.active.room_servers {
-      background: rgba(156, 39, 176, 0.15);
-      color: #7b1fa2;
-      border-color: rgba(156, 39, 176, 0.5);
+      background: rgb(from var(--room-servers-color) r g b / 0.15);
+      color: var(--room_servers-color);
+      border-color: rgb(from var(--room-servers-color) r g b / 0.5);
     }
     .l2-btn.active.sensors {
-      background: rgba(96, 125, 139, 0.15);
-      color: #455a64;
-      border-color: rgba(96, 125, 139, 0.5);
+      background: rgb(from var(--sensors-color) r g b / 0.15);
+      color: var(--sensors-color);
+      border-color: rgb(from var(--sensors-color) r g b / 0.5);
     }
 
     .l2-count {

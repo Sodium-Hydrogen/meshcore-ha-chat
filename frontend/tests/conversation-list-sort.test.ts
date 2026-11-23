@@ -5,6 +5,9 @@ import { html, render } from 'lit';
 import { UnreadController } from '../src/chat/unread-controller';
 import '../src/components/conversation-list';
 import type { Channel, Contact } from '../src/types';
+import { getUnreadAndLastRead } from '../src/api';
+import type { HomeAssistant } from '../src/types';
+
 
 function makeChannel(idx: number, name: string): Channel {
   return {
@@ -70,12 +73,13 @@ describe('ConversationList sorting by most recently messaged', () => {
         el.textContent?.trim(),
       );
 
-    // Default "All" tab: sorted newest message first, unmessaged last
+    // Default "All" tab: channels pinned at top (sorted by last message),
+    // followed by nodes (sorted by last message, unmessaged last)
     expect(renderedNames()).toEqual([
-      'Recent Node',     // 12:00
-      'Local',           // 11:00
-      'Public',          // 10:00
-      'Unmessaged Node', // no messages (0)
+      'Local',           // channel, 11:00
+      'Public',          // channel, 10:00
+      'Recent Node',     // node, 12:00
+      'Unmessaged Node', // node, no messages (0)
     ]);
 
     // Switch to "Channels" tab: still sorted newest message first
@@ -96,3 +100,24 @@ describe('ConversationList sorting by most recently messaged', () => {
     expect(renderedNames()).toEqual(['Recent Node', 'Unmessaged Node']);
   });
 });
+
+it('passes last_message_at from getUnreadAndLastRead into UnreadController', async () => {
+  const mockHass = {
+    callWS: async () => ({
+      unread: { 'binary_sensor.meshcore_aabbcc_111111_messages': 1 },
+      last_read: { 'binary_sensor.meshcore_aabbcc_111111_messages': 'm1' },
+      last_message_at: {
+        'binary_sensor.meshcore_aabbcc_111111_messages': '2026-06-09T12:00:00Z',
+      },
+    }),
+  } as unknown as HomeAssistant;
+
+  const data = await getUnreadAndLastRead(mockHass, 'entry-1');
+  const unread = new UnreadController();
+  unread.ingestBackendData(data, null);
+
+  expect(unread.lastActivity('111111aaaaaa', 'aabbcc')).toBe(
+    Date.parse('2026-06-09T12:00:00Z'),
+  );
+});
+

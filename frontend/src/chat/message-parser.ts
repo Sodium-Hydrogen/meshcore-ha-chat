@@ -152,6 +152,7 @@ export function toClientMessage(stored: StoredMessage): ChatMessage {
     text: stored.text,
     timestamp: new Date(stored.timestamp),
     isOutgoing: stored.outgoing,
+    isCommand: stored.is_command,
     isSystem: false,
     raw: stored.text,
     mentions: extractMentions(stored.text),

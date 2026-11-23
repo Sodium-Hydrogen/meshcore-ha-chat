@@ -6,6 +6,14 @@ import type { UnreadController } from '../chat/unread-controller';
 
 type ChatFilter = 'all' | 'unread' | 'dms' | 'channels';
 
+type NodeType = 'client' | 'repeater' | 'room_server' | 'sensor';
+const NODE_TYPE_MAP: Record<number, NodeType> = {
+  1: 'client',
+  2: 'repeater',
+  3: 'room_server',
+  4: 'sensor',
+};
+
 @customElement('meshcore-conversation-list')
 export class ConversationList extends LitElement {
   @property({ type: Array }) conversations: Array<Contact | Channel> = [];
@@ -100,7 +108,7 @@ export class ConversationList extends LitElement {
     }
 
     .filter-btn.active {
-      background: var(--primary-color, #03a9f4);
+      background: rgb(from var(--primary-color, #03a9f4) r g b / 0.15);
       border-color: var(--primary-color, #03a9f4);
       color: #fff;
     }
@@ -154,7 +162,8 @@ export class ConversationList extends LitElement {
       width: 40px;
       height: 40px;
       border-radius: 50%;
-      background: var(--primary-color, #03a9f4);
+      background: rgb(from var(--primary-color, #03a9f4) r g b / 0.5);
+      border: 1px solid var(--primary-color, #03a9f4);
       color: #fff;
       display: flex;
       align-items: center;
@@ -164,8 +173,21 @@ export class ConversationList extends LitElement {
       flex-shrink: 0;
     }
 
-    .conversation-avatar.channel {
-      background: var(--accent-color, #ff9800);
+    .conversation-avatar.client {
+      background: rgb(from var(--clients-color, #ff9800) r g b / 0.5);
+      border: 1px solid var(--clients-color, #ff9800);
+    }
+    .conversation-avatar.repeater {
+      background: rgb(from var(--repeaters-color, #ff9800) r g b / 0.5);
+      border: 1px solid var(--repeaters-color, #ff9800);
+    }
+    .conversation-avatar.room_server {
+      background: rgb(from var(--room-servers-color, #ff9800) r g b / 0.5);
+      border: 1px solid var(--room-servers-color, #ff9800);
+    }
+    .conversation-avatar.sensor {
+      background: rgb(from var(--sensors-color, #ff9800) r g b / 0.5);
+      border: 1px solid var(--sensors-color, #ff9800);
     }
 
     .conversation-info {
@@ -356,6 +378,7 @@ export class ConversationList extends LitElement {
 
   private _renderConversation(conv: Contact | Channel, listIdx: number) {
     const isContact = 'pubkey_prefix' in conv;
+    const type = isContact ? NODE_TYPE_MAP[(conv as Contact).type] : 'channel';
     const id = isContact ? (conv as Contact).pubkey_prefix : String((conv as Channel).channel_idx);
     const name = isContact ? (conv as Contact).adv_name : (conv as Channel).name;
     const detail = isContact ? (conv as Contact).pubkey_prefix : `Channel ${(conv as Channel).channel_idx}`;
@@ -390,7 +413,7 @@ export class ConversationList extends LitElement {
         @click=${() => this.dispatchEvent(
           new CustomEvent('conversation-selected', { detail: { id, isContact } }),
         )}>
-        <div class="conversation-avatar ${isContact ? '' : 'channel'}">${avatar}</div>
+        <div class="conversation-avatar ${type}">${avatar}</div>
         <div class="conversation-info">
           <div class="conversation-name">${name}</div>
           <div class="conversation-detail">${detail}</div>
@@ -450,11 +473,17 @@ export class ConversationList extends LitElement {
 
     if (this.unread) {
       list.sort((a, b) => {
+        const aIsChannel = !('pubkey_prefix' in a);
+        const bIsChannel = !('pubkey_prefix' in b);
+        if (aIsChannel !== bIsChannel) {
+          return aIsChannel ? -1 : 1;
+        }
         const aTs = this.unread.lastActivity(this._convId(a), this.nodePrefix);
         const bTs = this.unread.lastActivity(this._convId(b), this.nodePrefix);
         return bTs - aTs;
       });
     }
+
 
     this._filteredConversations = list;
   }
